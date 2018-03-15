@@ -1,14 +1,14 @@
 Fit the item-response model
 ================
 Tristan Mahr
-2018-03-13
+2018-03-15
 
 In this report, I fit a mixed effects model to perform an item-response analysis. What I want is an estimate of each child's phonemic discrimination ability.
 
 Model intuition
 ---------------
 
-In a mixed effects model, we have a sample of units, each of which have their own "effect" we want to estimate. For example, these might be participants in an experiment. We could estimate each effect separately, but this leaves some information on the table. If you model 80 participants, you have a good deal of information about how the 81st participant's data might look. Mixed effects models estimate an average effect and the distribution of effects around the average so that the units can borrow information from each other.
+In a mixed effects model, we have a sample of units, each of which have their own "effect" we want to estimate. For example, these might be participants with multiple trials or responses in an experiment. We could estimate each participant's effect separately, but this leaves some information on the table. If we model 80 participants, we have a good deal of information about how the 81st participant's data might look. Mixed effects models estimate an average effect and the distribution of effects around the average so that the units can borrow information from each other.
 
 To do an item-response analysis with mixed effects models, we include two levels of effects: participants and items. Participants differ in *ability*, and items differ in *difficulty*. Gelman and Hill (2007) provide a nice summary and visualization of the idea:
 
@@ -32,7 +32,6 @@ library(dplyr)
 #> 
 #>     intersect, setdiff, setequal, union
 library(lme4)
-#> Warning: package 'lme4' was built under R version 3.4.3
 #> Loading required package: Matrix
 library(ggplot2)
 
@@ -247,8 +246,17 @@ summary(m_minpair_vocab)
 Which makes the participant abilities a little smoother because we have more information to differentiate participant's abilities.
 
 ``` r
-lattice::dotplot(ranef(m_minpair_age, condVar = TRUE))["ResearchID"]
-lattice::dotplot(ranef(m_minpair_vocab, condVar = TRUE))["ResearchID"]
+p <- lattice::dotplot(
+  ranef(m_minpair_age, condVar = TRUE),
+  scales = list(y = list(alternating = 4)),
+  sub = "age model")
+print(p[["ResearchID"]])
+
+p <- lattice::dotplot(
+  ranef(m_minpair_vocab, condVar = TRUE), 
+  scales = list(y = list(alternating = 4)),
+  sub = "age + receptive vocab model")
+print(p[["ResearchID"]])
 ```
 
 <img src="figs/01-ranef-caterpillars-age-1.png" width="30%" /><img src="figs/01-ranef-caterpillars-age-2.png" width="30%" />
@@ -277,15 +285,72 @@ tidy_abilities <- function(model, label, newdata = minpair) {
   coefs %>% 
     left_join(ranefs, by = "ResearchID") %>% 
     left_join(fitted, by = "ResearchID") %>% 
-    tibble::add_column(model = label, .before = 1)
+    tibble::add_column(Model = label, .before = 1)
 }
+
+# Include participant info
+p_info <- minpair %>% 
+  group_by(ResearchID) %>% 
+  summarise(
+    PPVT_GSV = unique(PPVT_GSV),
+    MinPair_Age = unique(MinPair_Age),
+    Correct = sum(Correct),
+    Trials = n(),
+    Proportion = Correct / Trials)
 
 fits <- bind_rows(
   tidy_abilities(m_minpair, "base"),
   tidy_abilities(m_minpair_age, "base + age"),
   tidy_abilities(m_minpair_vocab, "base + age + ppvt")) %>% 
+  left_join(p_info, by = "ResearchID") %>% 
   readr::write_csv("./data/minpair-abilities.csv")
 ```
+
+Some confirmatory plots
+-----------------------
+
+First, confirm that participants missing vocabulary scores did not get an ability estimate from the model that controlled for vocabulary scores. There should be fewer rows of estimates in that model.
+
+``` r
+count(fits, Model)
+#> # A tibble: 3 x 2
+#>   Model                 n
+#>   <chr>             <int>
+#> 1 base                184
+#> 2 base + age          184
+#> 3 base + age + ppvt   176
+```
+
+Now, we plot the participant's intercepts. These are the accuracy for an average participant for an average item (fixed-effects intercept) plus each participant's deviation from that average (by-participant random intercept).
+
+``` r
+ggplot(fits) + 
+  aes(x = MinPair_Age, y = coef) + 
+  geom_point() + 
+  stat_smooth(method = "lm") + 
+  facet_wrap("Model") + 
+  labs(
+    title = "Age effect on participant intercepts",
+    x = "Age (months)", 
+    y = "Participant average (log-odds)")
+```
+
+![](figs/01-ranef-controlled-1.png)
+
+``` r
+
+ggplot(fits) + 
+  aes(x = PPVT_GSV, y = coef) + 
+  geom_point(na.rm = TRUE) + 
+  stat_smooth(method = "lm", na.rm = TRUE) + 
+  facet_wrap("Model") + 
+  labs(
+    title = "Vocabulary effect on participant intercepts",
+    x = "Vocabulary (PPVT4 GSV)", 
+    y = "Participant average (log-odds)")
+```
+
+![](figs/01-ranef-controlled-2.png)
 
 References
 ----------
